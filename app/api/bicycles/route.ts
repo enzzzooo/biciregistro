@@ -1,8 +1,44 @@
 import { NextRequest, NextResponse } from 'next/server';
 import type { Bicycle, SearchFilters } from '@/types/bicycle';
+import * as cheerio from 'cheerio';
+import type { AnyNode } from 'domhandler';
 
-// This function scrapes biciregistro.es for bicycle data
+// This function scrapes biciregistro.es for bicycle data with pagination support
 async function fetchBicyclesFromBiciregistro(filters: SearchFilters): Promise<Bicycle[]> {
+  try {
+    const allBicycles: Bicycle[] = [];
+    let page = 1;
+    let hasMorePages = true;
+
+    // Fetch all pages
+    while (hasMorePages) {
+      const bicycles = await fetchBicyclesPage(filters, page);
+      
+      if (bicycles.length === 0) {
+        hasMorePages = false;
+      } else {
+        allBicycles.push(...bicycles);
+        page++;
+        
+        // Safety limit to prevent infinite loops
+        if (page > 100) {
+          console.warn('Reached maximum page limit (100)');
+          hasMorePages = false;
+        }
+      }
+    }
+
+    console.log(`Fetched ${allBicycles.length} bicycles from ${page - 1} pages`);
+    return allBicycles;
+  } catch (error) {
+    console.error('Error fetching bicycles:', error);
+    // Return mock data for development/demo purposes
+    return getMockBicycles(filters);
+  }
+}
+
+// Fetch a single page of bicycles
+async function fetchBicyclesPage(filters: SearchFilters, page: number): Promise<Bicycle[]> {
   try {
     // Build URL with query parameters
     const baseUrl = 'https://biciregistro.es/bicicletas/localizadas';
@@ -16,6 +52,11 @@ async function fetchBicyclesFromBiciregistro(filters: SearchFilters): Promise<Bi
     if (filters.ciudad) params.append('ciudad', filters.ciudad);
     if (filters.provincia) params.append('provincia', filters.provincia);
     if (filters.searchTerm) params.append('q', filters.searchTerm);
+    
+    // Add page parameter
+    if (page > 1) {
+      params.append('page', page.toString());
+    }
 
     const url = params.toString() ? `${baseUrl}?${params.toString()}` : baseUrl;
     
@@ -37,22 +78,134 @@ async function fetchBicyclesFromBiciregistro(filters: SearchFilters): Promise<Bi
     
     return bicycles;
   } catch (error) {
-    console.error('Error fetching bicycles:', error);
-    // Return mock data for development/demo purposes
-    return getMockBicycles(filters);
+    console.error(`Error fetching page ${page}:`, error);
+    return [];
   }
 }
 
-function parseBicycleData(_html: string): Bicycle[] {
+function parseBicycleData(html: string): Bicycle[] {
   const bicycles: Bicycle[] = [];
   
-  // This is a simplified parser - in a real implementation, you'd use a proper HTML parser
-  // like cheerio or jsdom to extract data from the actual website structure
-  
-  // For now, this is a placeholder that would need to be implemented based on
-  // the actual HTML structure of biciregistro.es
+  try {
+    const $ = cheerio.load(html);
+    
+    // Common patterns for bicycle listings on Spanish bike registry sites
+    // Try multiple selectors to find bicycle cards
+    const cardSelectors = [
+      '.bicicleta-card',
+      '.bicycle-card',
+      '.bike-item',
+      '.bicicleta-item',
+      'article.bicicleta',
+      '.card.bicicleta',
+      '[data-bicicleta]',
+      '[data-bicycle]',
+      '.resultado-bicicleta',
+      '.listado-bicicletas > div',
+      '.grid > div[class*="col"]',
+    ];
+    
+    let $cards = $();
+    for (const selector of cardSelectors) {
+      $cards = $(selector);
+      if ($cards.length > 0) {
+        console.log(`Found ${$cards.length} bicycles using selector: ${selector}`);
+        break;
+      }
+    }
+    
+    // If no cards found with specific selectors, try to find any repeated structure
+    if ($cards.length === 0) {
+      // Look for table rows
+      const $rows = $('table tbody tr, .table tbody tr');
+      if ($rows.length > 0) {
+        $cards = $rows;
+        console.log(`Found ${$cards.length} bicycles in table rows`);
+      }
+    }
+    
+    $cards.each((index, element) => {
+      const $card = $(element);
+      
+      try {
+        // Extract data - try multiple patterns
+        const marca = extractText($card, ['.marca', '[data-marca]', 'strong:contains("Marca")', '.brand']) || '';
+        const modelo = extractText($card, ['.modelo', '[data-modelo]', '.model']) || '';
+        const color = extractText($card, ['.color', '[data-color]']) || '';
+        const numeroSerie = extractText($card, ['.numero-serie', '[data-numero-serie]', '.serial-number']) || undefined;
+        const numeroMatricula = extractText($card, ['.numero-matricula', '[data-numero-matricula]', '.registration']) || undefined;
+        const ciudad = extractText($card, ['.ciudad', '[data-ciudad]', '.city']) || undefined;
+        const provincia = extractText($card, ['.provincia', '[data-provincia]', '.province']) || undefined;
+        const descripcion = extractText($card, ['.descripcion', '[data-descripcion]', '.description', 'p']) || undefined;
+        
+        // Extract image URL
+        const imagen = extractImage($card, ['img.imagen', 'img.foto', 'img', '[data-imagen]']) || undefined;
+        
+        // Extract dates
+        const fechaRobo = extractText($card, ['.fecha-robo', '[data-fecha-robo]']) || undefined;
+        const fechaLocalizacion = extractText($card, ['.fecha-localizacion', '[data-fecha-localizacion]']) || undefined;
+        
+        // Generate ID from available data
+        const id = `bike-${index}-${Date.now()}`;
+        
+        // Only add if we have at least brand or model
+        if (marca || modelo) {
+          const bicycle: Bicycle = {
+            id,
+            marca,
+            modelo,
+            color,
+            numeroSerie,
+            numeroMatricula,
+            ciudad,
+            provincia,
+            descripcion,
+            imagen,
+            imagenCompleta: imagen, // Use same image for full resolution
+            estado: 'localizada',
+            fechaRobo,
+            fechaLocalizacion,
+          };
+          
+          bicycles.push(bicycle);
+        }
+      } catch (err) {
+        console.error(`Error parsing bicycle at index ${index}:`, err);
+      }
+    });
+    
+  } catch (error) {
+    console.error('Error parsing HTML:', error);
+  }
   
   return bicycles;
+}
+
+// Helper function to extract text from multiple possible selectors
+function extractText($element: cheerio.Cheerio<AnyNode>, selectors: string[]): string {
+  for (const selector of selectors) {
+    const text = $element.find(selector).first().text().trim();
+    if (text) return text;
+  }
+  
+  return '';
+}
+
+// Helper function to extract image URL from multiple possible selectors
+function extractImage($element: cheerio.Cheerio<AnyNode>, selectors: string[]): string {
+  for (const selector of selectors) {
+    const $img = $element.find(selector).first();
+    const src = $img.attr('src') || $img.attr('data-src');
+    if (src) {
+      // Handle relative URLs
+      if (src.startsWith('/')) {
+        return `https://biciregistro.es${src}`;
+      }
+      return src;
+    }
+  }
+  
+  return '';
 }
 
 // Mock data for development purposes
