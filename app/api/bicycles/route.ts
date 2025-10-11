@@ -9,12 +9,17 @@ async function fetchBicyclesFromBiciregistro(filters: SearchFilters): Promise<Bi
     const allBicycles: Bicycle[] = [];
     let page = 1;
     let hasMorePages = true;
+    let fetchError = false;
 
     // Fetch all pages
-    while (hasMorePages) {
+    while (hasMorePages && !fetchError) {
       const bicycles = await fetchBicyclesPage(filters, page);
       
       if (bicycles.length === 0) {
+        // If first page returns 0, it might be an error
+        if (page === 1) {
+          fetchError = true;
+        }
         hasMorePages = false;
       } else {
         allBicycles.push(...bicycles);
@@ -29,6 +34,12 @@ async function fetchBicyclesFromBiciregistro(filters: SearchFilters): Promise<Bi
     }
 
     console.log(`Fetched ${allBicycles.length} bicycles from ${page - 1} pages`);
+    
+    // If we got no results on the first page, try mock data
+    if (allBicycles.length === 0 && fetchError) {
+      throw new Error('Failed to fetch any bicycles from first page');
+    }
+    
     return allBicycles;
   } catch (error) {
     console.error('Error fetching bicycles:', error);
