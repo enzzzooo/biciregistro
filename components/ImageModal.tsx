@@ -42,7 +42,6 @@ export default function ImageModal({ imageUrl, onClose }: ImageModalProps) {
 
       <div 
         className="relative max-w-7xl max-h-[90vh] w-full h-full"
-        onClick={(e) => e.stopPropagation()}
       >
         <Image
           src={imageUrl}
