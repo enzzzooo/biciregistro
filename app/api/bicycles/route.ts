@@ -220,6 +220,7 @@ function extractImage($element: cheerio.Cheerio<AnyNode>, selectors: string[]): 
 }
 
 // Mock data for development purposes
+// Note: Images will be populated from biciregistro.es when scraping works in production
 function getMockBicycles(filters: SearchFilters): Bicycle[] {
   const allBicycles: Bicycle[] = [
     {
@@ -234,8 +235,6 @@ function getMockBicycles(filters: SearchFilters): Bicycle[] {
       ciudad: 'Madrid',
       provincia: 'Madrid',
       descripcion: 'Bicicleta de paseo con cesta delantera y luces LED',
-      imagen: 'https://images.unsplash.com/photo-1485965120184-e220f721d03e?w=400',
-      imagenCompleta: 'https://images.unsplash.com/photo-1485965120184-e220f721d03e?w=1200',
       estado: 'localizada',
       fechaLocalizacion: '2024-02-20',
       lugarLocalizacion: 'Parque del Retiro',
@@ -252,8 +251,6 @@ function getMockBicycles(filters: SearchFilters): Bicycle[] {
       ciudad: 'Barcelona',
       provincia: 'Barcelona',
       descripcion: 'Bicicleta de carretera, componentes Shimano 105',
-      imagen: 'https://images.unsplash.com/photo-1571333250630-f0230c320b6d?w=400',
-      imagenCompleta: 'https://images.unsplash.com/photo-1571333250630-f0230c320b6d?w=1200',
       estado: 'localizada',
       fechaLocalizacion: '2024-03-01',
       lugarLocalizacion: 'Estación de Sants',
@@ -270,8 +267,6 @@ function getMockBicycles(filters: SearchFilters): Bicycle[] {
       ciudad: 'Valencia',
       provincia: 'Valencia',
       descripcion: 'Mountain bike con suspensión delantera',
-      imagen: 'https://images.unsplash.com/photo-1576435728678-68d0fbf94e91?w=400',
-      imagenCompleta: 'https://images.unsplash.com/photo-1576435728678-68d0fbf94e91?w=1200',
       estado: 'localizada',
       fechaLocalizacion: '2024-02-15',
       lugarLocalizacion: 'Jardín del Turia',
@@ -288,8 +283,6 @@ function getMockBicycles(filters: SearchFilters): Bicycle[] {
       ciudad: 'Sevilla',
       provincia: 'Sevilla',
       descripcion: 'Bicicleta híbrida, perfecta para ciudad',
-      imagen: 'https://images.unsplash.com/photo-1532298229144-0ec0c57515c7?w=400',
-      imagenCompleta: 'https://images.unsplash.com/photo-1532298229144-0ec0c57515c7?w=1200',
       estado: 'localizada',
       fechaLocalizacion: '2024-03-20',
       lugarLocalizacion: 'Parque de María Luisa',
@@ -306,8 +299,6 @@ function getMockBicycles(filters: SearchFilters): Bicycle[] {
       ciudad: 'Bilbao',
       provincia: 'Vizcaya',
       descripcion: 'Bicicleta urbana con cambios internos Shimano',
-      imagen: 'https://images.unsplash.com/photo-1507035895480-2b3156c31fc8?w=400',
-      imagenCompleta: 'https://images.unsplash.com/photo-1507035895480-2b3156c31fc8?w=1200',
       estado: 'localizada',
       fechaLocalizacion: '2024-03-15',
       lugarLocalizacion: 'Museo Guggenheim',
@@ -324,8 +315,6 @@ function getMockBicycles(filters: SearchFilters): Bicycle[] {
       ciudad: 'Zaragoza',
       provincia: 'Zaragoza',
       descripcion: 'MTB con frenos de disco hidráulicos',
-      imagen: 'https://images.unsplash.com/photo-1511994714008-b6fa2c655ea1?w=400',
-      imagenCompleta: 'https://images.unsplash.com/photo-1511994714008-b6fa2c655ea1?w=1200',
       estado: 'localizada',
       fechaLocalizacion: '2024-02-25',
       lugarLocalizacion: 'Parque Grande',
