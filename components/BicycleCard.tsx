@@ -11,7 +11,7 @@ interface BicycleCardProps {
 
 export default function BicycleCard({ bicycle, onImageClick }: BicycleCardProps) {
   const [imageError, setImageError] = React.useState(false);
-  const imageUrl = imageError ? '/images/bicicletas/placeholder.svg' : (bicycle.imagen || '/images/bicicletas/placeholder.svg');
+  const imageUrl = imageError || !bicycle.imagen ? '/images/bicicletas/placeholder.svg' : bicycle.imagen;
 
   return (
     <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg overflow-hidden hover:shadow-xl transition-shadow">

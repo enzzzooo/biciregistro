@@ -8,7 +8,6 @@ const nextConfig: NextConfig = {
         hostname: 'biciregistro.es',
       },
     ],
-    unoptimized: false, // Allow Next.js to optimize images
   },
 };
 
