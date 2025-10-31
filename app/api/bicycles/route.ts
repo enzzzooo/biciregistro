@@ -9,96 +9,179 @@ async function fetchBicyclesFromBiciregistro(filters: SearchFilters): Promise<Bi
     const allBicycles: Bicycle[] = [];
     let page = 1;
     let hasMorePages = true;
-    let fetchError = false;
+    let consecutiveEmptyPages = 0;
+    const maxConsecutiveEmpty = 2; // Stop after 2 consecutive empty pages
 
-    // Fetch all pages
-    while (hasMorePages && !fetchError) {
-      const bicycles = await fetchBicyclesPage(filters, page);
+    console.log('Starting to fetch bicycles from biciregistro.es...');
+
+    // Fetch all pages until we hit an empty page or reach the limit
+    while (hasMorePages && page <= 100) {
+      console.log(`Fetching page ${page}...`);
+      const result = await fetchBicyclesPage(filters, page);
       
-      if (bicycles.length === 0) {
-        // If first page returns 0, it might be an error
-        if (page === 1) {
-          fetchError = true;
-        }
-        hasMorePages = false;
-      } else {
-        allBicycles.push(...bicycles);
-        page++;
+      if (result.bicycles.length === 0) {
+        consecutiveEmptyPages++;
+        console.log(`Page ${page} returned 0 bicycles (consecutive empty: ${consecutiveEmptyPages})`);
         
-        // Safety limit to prevent infinite loops
-        if (page > 100) {
-          console.warn('Reached maximum page limit (100)');
+        // If we've seen multiple consecutive empty pages, stop
+        if (consecutiveEmptyPages >= maxConsecutiveEmpty) {
+          console.log('Stopping due to consecutive empty pages');
+          hasMorePages = false;
+        }
+      } else {
+        consecutiveEmptyPages = 0; // Reset counter
+        allBicycles.push(...result.bicycles);
+        console.log(`Page ${page}: Added ${result.bicycles.length} bicycles (total: ${allBicycles.length})`);
+        
+        // Check if there's a next page indicator
+        if (result.hasNextPage === false) {
+          console.log('No more pages indicated by pagination');
           hasMorePages = false;
         }
       }
+      
+      page++;
     }
 
-    console.log(`Fetched ${allBicycles.length} bicycles from ${page - 1} pages`);
+    if (page > 100) {
+      console.warn('Reached maximum page limit (100)');
+    }
+
+    console.log(`Successfully fetched ${allBicycles.length} bicycles from ${page - 1} pages`);
     
-    // If we got no results on the first page, try mock data
-    if (allBicycles.length === 0 && fetchError) {
-      throw new Error('Failed to fetch any bicycles from first page');
+    // If we got no results at all, throw error to trigger mock data
+    if (allBicycles.length === 0) {
+      throw new Error('No bicycles found on biciregistro.es');
     }
     
     return allBicycles;
   } catch (error) {
-    console.error('Error fetching bicycles:', error);
+    console.error('Error fetching bicycles from biciregistro.es:', error);
+    console.log('Falling back to mock data');
     // Return mock data for development/demo purposes
     return getMockBicycles(filters);
   }
 }
 
 // Fetch a single page of bicycles
-async function fetchBicyclesPage(filters: SearchFilters, page: number): Promise<Bicycle[]> {
-  try {
-    // Build URL with query parameters
-    const baseUrl = 'https://biciregistro.es/bicicletas/localizadas';
-    const params = new URLSearchParams();
-    
-    if (filters.marca) params.append('marca', filters.marca);
-    if (filters.modelo) params.append('modelo', filters.modelo);
-    if (filters.color) params.append('color', filters.color);
-    if (filters.numeroSerie) params.append('numero_serie', filters.numeroSerie);
-    if (filters.numeroMatricula) params.append('numero_matricula', filters.numeroMatricula);
-    if (filters.ciudad) params.append('ciudad', filters.ciudad);
-    if (filters.provincia) params.append('provincia', filters.provincia);
-    if (filters.searchTerm) params.append('q', filters.searchTerm);
-    
-    // Add page parameter
-    if (page > 1) {
-      params.append('page', page.toString());
+async function fetchBicyclesPage(
+  filters: SearchFilters, 
+  page: number
+): Promise<{ bicycles: Bicycle[]; hasNextPage: boolean | null }> {
+  const maxRetries = 3;
+  let lastError: Error | null = null;
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      // Build URL with query parameters
+      const baseUrl = 'https://biciregistro.es/bicicletas/localizadas';
+      const params = new URLSearchParams();
+      
+      if (filters.marca) params.append('marca', filters.marca);
+      if (filters.modelo) params.append('modelo', filters.modelo);
+      if (filters.color) params.append('color', filters.color);
+      if (filters.numeroSerie) params.append('numero_serie', filters.numeroSerie);
+      if (filters.numeroMatricula) params.append('numero_matricula', filters.numeroMatricula);
+      if (filters.ciudad) params.append('ciudad', filters.ciudad);
+      if (filters.provincia) params.append('provincia', filters.provincia);
+      if (filters.searchTerm) params.append('q', filters.searchTerm);
+      
+      // Add page parameter
+      if (page > 1) {
+        params.append('page', page.toString());
+      }
+
+      const url = params.toString() ? `${baseUrl}?${params.toString()}` : baseUrl;
+      
+      console.log(`Attempt ${attempt}/${maxRetries} to fetch: ${url}`);
+      
+      const response = await fetch(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+          'Accept-Language': 'es-ES,es;q=0.9,en;q=0.8',
+          'Accept-Encoding': 'gzip, deflate, br',
+          'Connection': 'keep-alive',
+          'Upgrade-Insecure-Requests': '1',
+        },
+        cache: 'no-store',
+        signal: AbortSignal.timeout(10000), // 10 second timeout
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const html = await response.text();
+      
+      // Parse HTML to extract bicycle data and pagination info
+      const result = parseBicycleData(html);
+      
+      console.log(`Page ${page}: Found ${result.bicycles.length} bicycles, hasNextPage: ${result.hasNextPage}`);
+      
+      return result;
+    } catch (error) {
+      lastError = error as Error;
+      console.error(`Attempt ${attempt}/${maxRetries} failed for page ${page}:`, error);
+      
+      if (attempt < maxRetries) {
+        // Wait before retrying (exponential backoff)
+        const waitTime = Math.min(1000 * Math.pow(2, attempt - 1), 5000);
+        console.log(`Waiting ${waitTime}ms before retry...`);
+        await new Promise(resolve => setTimeout(resolve, waitTime));
+      }
     }
-
-    const url = params.toString() ? `${baseUrl}?${params.toString()}` : baseUrl;
-    
-    const response = await fetch(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-      },
-      cache: 'no-store',
-    });
-
-    if (!response.ok) {
-      throw new Error(`Failed to fetch: ${response.statusText}`);
-    }
-
-    const html = await response.text();
-    
-    // Parse HTML to extract bicycle data
-    const bicycles = parseBicycleData(html);
-    
-    return bicycles;
-  } catch (error) {
-    console.error(`Error fetching page ${page}:`, error);
-    return [];
   }
+
+  console.error(`All ${maxRetries} attempts failed for page ${page}:`, lastError);
+  return { bicycles: [], hasNextPage: null };
 }
 
-function parseBicycleData(html: string): Bicycle[] {
+function parseBicycleData(html: string): { bicycles: Bicycle[]; hasNextPage: boolean | null } {
   const bicycles: Bicycle[] = [];
+  let hasNextPage: boolean | null = null;
   
   try {
     const $ = cheerio.load(html);
+    
+    // Detect pagination - look for "next" links or page indicators
+    const paginationSelectors = [
+      'a.next:not(.disabled)',
+      'a[rel="next"]',
+      'a:contains("Siguiente"):not(.disabled)',
+      'a:contains("›"):not(.disabled)',
+      'li.next:not(.disabled) a',
+      '.pagination .next:not(.disabled) a',
+      'nav[aria-label*="pagination" i] a:contains("›")',
+    ];
+    
+    for (const selector of paginationSelectors) {
+      const $next = $(selector);
+      if ($next.length > 0) {
+        hasNextPage = true;
+        console.log(`Found next page indicator with selector: ${selector}`);
+        break;
+      }
+    }
+    
+    // If no next page found, check if we're on the last page
+    if (hasNextPage === null) {
+      const lastPageSelectors = [
+        'a.next.disabled',
+        'li.next.disabled',
+        '.pagination .disabled:contains("Siguiente")',
+        '.pagination .disabled:contains("›")',
+      ];
+      
+      for (const selector of lastPageSelectors) {
+        const $disabled = $(selector);
+        if ($disabled.length > 0) {
+          hasNextPage = false;
+          console.log(`Detected last page with selector: ${selector}`);
+          break;
+        }
+      }
+    }
     
     // Common patterns for bicycle listings on Spanish bike registry sites
     // Try multiple selectors to find bicycle cards
@@ -112,11 +195,15 @@ function parseBicycleData(html: string): Bicycle[] {
       '[data-bicicleta]',
       '[data-bicycle]',
       '.resultado-bicicleta',
+      '.resultado',
       '.listado-bicicletas > div',
       '.grid > div[class*="col"]',
+      '.bicycles-list > div',
+      '.bike-list > div',
     ];
     
     let $cards = $();
+    
     for (const selector of cardSelectors) {
       $cards = $(selector);
       if ($cards.length > 0) {
@@ -140,24 +227,24 @@ function parseBicycleData(html: string): Bicycle[] {
       
       try {
         // Extract data - try multiple patterns
-        const marca = extractText($card, ['.marca', '[data-marca]', 'strong:contains("Marca")', '.brand']) || '';
-        const modelo = extractText($card, ['.modelo', '[data-modelo]', '.model']) || '';
-        const color = extractText($card, ['.color', '[data-color]']) || '';
-        const numeroSerie = extractText($card, ['.numero-serie', '[data-numero-serie]', '.serial-number']) || undefined;
-        const numeroMatricula = extractText($card, ['.numero-matricula', '[data-numero-matricula]', '.registration']) || undefined;
-        const ciudad = extractText($card, ['.ciudad', '[data-ciudad]', '.city']) || undefined;
-        const provincia = extractText($card, ['.provincia', '[data-provincia]', '.province']) || undefined;
-        const descripcion = extractText($card, ['.descripcion', '[data-descripcion]', '.description', 'p']) || undefined;
+        const marca = extractText($card, ['.marca', '[data-marca]', 'strong:contains("Marca")', '.brand', 'dt:contains("Marca") + dd']) || '';
+        const modelo = extractText($card, ['.modelo', '[data-modelo]', '.model', 'dt:contains("Modelo") + dd']) || '';
+        const color = extractText($card, ['.color', '[data-color]', 'dt:contains("Color") + dd']) || '';
+        const numeroSerie = extractText($card, ['.numero-serie', '[data-numero-serie]', '.serial-number', 'dt:contains("Serie") + dd']) || undefined;
+        const numeroMatricula = extractText($card, ['.numero-matricula', '[data-numero-matricula]', '.registration', 'dt:contains("Matrícula") + dd']) || undefined;
+        const ciudad = extractText($card, ['.ciudad', '[data-ciudad]', '.city', 'dt:contains("Ciudad") + dd']) || undefined;
+        const provincia = extractText($card, ['.provincia', '[data-provincia]', '.province', 'dt:contains("Provincia") + dd']) || undefined;
+        const descripcion = extractText($card, ['.descripcion', '[data-descripcion]', '.description', 'p', 'dt:contains("Descripción") + dd']) || undefined;
         
         // Extract image URL
-        const imagen = extractImage($card, ['img.imagen', 'img.foto', 'img', '[data-imagen]']) || undefined;
+        const imagen = extractImage($card, ['img.imagen', 'img.foto', 'img.bicicleta', 'img', '[data-imagen]']) || undefined;
         
         // Extract dates
-        const fechaRobo = extractText($card, ['.fecha-robo', '[data-fecha-robo]']) || undefined;
-        const fechaLocalizacion = extractText($card, ['.fecha-localizacion', '[data-fecha-localizacion]']) || undefined;
+        const fechaRobo = extractText($card, ['.fecha-robo', '[data-fecha-robo]', 'dt:contains("Robo") + dd', 'dt:contains("Fecha de robo") + dd']) || undefined;
+        const fechaLocalizacion = extractText($card, ['.fecha-localizacion', '[data-fecha-localizacion]', 'dt:contains("Localización") + dd', 'dt:contains("Fecha de localización") + dd']) || undefined;
         
-        // Generate ID from available data
-        const id = `bike-${index}-${Date.now()}`;
+        // Generate unique ID
+        const id = `bike-${Date.now()}-${index}`;
         
         // Only add if we have at least brand or model
         if (marca || modelo) {
@@ -171,8 +258,8 @@ function parseBicycleData(html: string): Bicycle[] {
             ciudad,
             provincia,
             descripcion,
-            imagen,
-            imagenCompleta: imagen, // Use same image for full resolution
+            imagen: imagen || '/images/bicicletas/placeholder.svg',
+            imagenCompleta: imagen || '/images/bicicletas/placeholder.svg',
             estado: 'localizada',
             fechaRobo,
             fechaLocalizacion,
@@ -185,11 +272,13 @@ function parseBicycleData(html: string): Bicycle[] {
       }
     });
     
+    console.log(`Parsed ${bicycles.length} bicycles from HTML`);
+    
   } catch (error) {
     console.error('Error parsing HTML:', error);
   }
   
-  return bicycles;
+  return { bicycles, hasNextPage };
 }
 
 // Helper function to extract text from multiple possible selectors
