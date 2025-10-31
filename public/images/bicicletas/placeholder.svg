@@ -1,0 +1,14 @@
+<svg width="400" height="300" xmlns="http://www.w3.org/2000/svg">
+  <rect width="400" height="300" fill="#f3f4f6"/>
+  <g transform="translate(200, 150)">
+    <!-- Bicycle icon -->
+    <circle cx="-60" cy="40" r="25" fill="none" stroke="#6b7280" stroke-width="3"/>
+    <circle cx="60" cy="40" r="25" fill="none" stroke="#6b7280" stroke-width="3"/>
+    <path d="M -35,40 L 35,40 L 0,-20 Z" fill="none" stroke="#6b7280" stroke-width="3"/>
+    <path d="M 0,-20 L 0,10" stroke="#6b7280" stroke-width="3"/>
+    <circle cx="0" cy="-20" r="5" fill="#6b7280"/>
+  </g>
+  <text x="200" y="240" font-family="Arial, sans-serif" font-size="18" fill="#9ca3af" text-anchor="middle">
+    Bicicleta
+  </text>
+</svg>
