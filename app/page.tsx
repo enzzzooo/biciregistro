@@ -11,6 +11,7 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const [isScrolled, setIsScrolled] = useState(false);
 
   const fetchBicycles = async (filters: SearchFilters = {}) => {
     setLoading(true);
@@ -49,15 +50,24 @@ export default function Home() {
     fetchBicycles();
   }, []);
 
+  useEffect(() => {
+    const handleScroll = () => {
+      setIsScrolled(window.scrollY > 20);
+    };
+
+    window.addEventListener('scroll', handleScroll);
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-green-50 dark:from-gray-900 dark:via-gray-800 dark:to-gray-900">
       {/* Header */}
-      <header className="bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm border-b border-gray-200 dark:border-gray-700 sticky top-0 z-10">
-        <div className="container mx-auto px-4 py-6">
-          <h1 className="text-4xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-green-600 dark:from-blue-400 dark:to-green-400">
+      <header className={`bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm border-b border-gray-200 dark:border-gray-700 sticky top-0 z-10 transition-all duration-300 ${isScrolled ? 'py-3' : 'py-6'}`}>
+        <div className="container mx-auto px-4">
+          <h1 className={`font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-green-600 dark:from-blue-400 dark:to-green-400 transition-all duration-300 ${isScrolled ? 'text-2xl' : 'text-4xl'}`}>
             🚲 BiciRegistro
           </h1>
-          <p className="text-gray-600 dark:text-gray-300 mt-2">
+          <p className={`text-gray-600 dark:text-gray-300 transition-all duration-300 ${isScrolled ? 'mt-1 text-sm' : 'mt-2'}`}>
             Búsqueda de bicicletas localizadas en España
           </p>
         </div>

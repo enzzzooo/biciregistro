@@ -53,9 +53,7 @@ export default function ImageModal({ imageUrl, onClose }: ImageModalProps) {
         />
       </div>
 
-      <div className="absolute bottom-4 left-0 right-0 text-center text-white text-sm">
-        Haz clic fuera de la imagen o presiona ESC para cerrar
-      </div>
+
     </div>
   );
 }
