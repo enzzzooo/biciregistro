@@ -604,9 +604,8 @@ export async function GET(request: NextRequest) {
       searchTerm: searchParams.get('searchTerm') || undefined,
     };
 
-    // Use mock data directly for faster performance
-    // The external site scraping is unreliable and slow
-    const bicycles = getMockBicycles(filters);
+    // Fetch bicycles from biciregistro.es
+    const bicycles = await fetchBicyclesFromBiciregistro(filters);
 
     return NextResponse.json({
       success: true,
