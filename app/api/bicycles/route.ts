@@ -3,6 +3,13 @@ import type { Bicycle, SearchFilters } from '@/types/bicycle';
 import * as cheerio from 'cheerio';
 import type { AnyNode } from 'domhandler';
 
+// Constants
+const MAX_API_PAGES = 10;
+const MAX_SCRAPING_PAGES = 100;
+const API_TIMEOUT_MS = 10000;
+const SCRAPING_TIMEOUT_MS = 15000;
+const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+
 // This function fetches bicycle data from biciregistro.es REST API with multiple fallback strategies
 async function fetchBicyclesFromBiciregistro(filters: SearchFilters): Promise<Bicycle[]> {
   try {
@@ -73,7 +80,7 @@ async function fetchFromRestAPI(filters: SearchFilters): Promise<Bicycle[]> {
       for (const methodConfig of methods) {
         try {
           // Try POST request with pagination parameters
-          for (let page = 0; page < 10; page++) {
+          for (let page = 0; page < MAX_API_PAGES; page++) {
             const requestBody = methodConfig.method === 'POST' ? {
               pageNumber: page,
               pageSize: 100,
@@ -90,13 +97,13 @@ async function fetchFromRestAPI(filters: SearchFilters): Promise<Bicycle[]> {
             const fetchOptions: RequestInit = {
               method: methodConfig.method,
               headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'User-Agent': USER_AGENT,
                 'Accept': 'application/json',
                 'Content-Type': 'application/json',
                 'Origin': 'https://www.biciregistro.es',
                 'Referer': 'https://www.biciregistro.es/',
               },
-              signal: AbortSignal.timeout(10000),
+              signal: AbortSignal.timeout(API_TIMEOUT_MS),
             };
 
             if (methodConfig.method === 'POST' && requestBody) {
@@ -111,7 +118,8 @@ async function fetchFromRestAPI(filters: SearchFilters): Promise<Bicycle[]> {
 
             if (response.ok) {
               const data = await response.json();
-              console.log(`API response from ${endpoint} (${methodConfig.method}):`, JSON.stringify(data).substring(0, 200));
+              // Log only metadata, not full response to avoid exposing sensitive data
+              console.log(`API response from ${endpoint} (${methodConfig.method}): status=ok, hasData=${!!data}`);
               
               // Parse the response based on its structure
               const bicycles = parseAPIResponse(data);
@@ -176,8 +184,13 @@ function parseAPIResponse(data: any): Bicycle[] {
     }
 
     for (const item of items) {
+      // Generate unique ID using crypto.randomUUID if available, fallback to timestamp-based
+      const id = typeof crypto !== 'undefined' && crypto.randomUUID 
+        ? crypto.randomUUID()
+        : `bike-${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
+        
       const bicycle: Bicycle = {
-        id: item.id || item.idBicicleta || `bike-${Date.now()}-${Math.random()}`,
+        id: item.id || item.idBicicleta || id,
         marca: item.marca || item.brand || '',
         modelo: item.modelo || item.model || '',
         color: item.color || '',
@@ -238,7 +251,7 @@ async function fetchBicyclesViaScraping(filters: SearchFilters): Promise<Bicycle
 
   console.log('Starting HTML scraping fallback...');
 
-  while (hasMorePages && page <= 100) {
+  while (hasMorePages && page <= MAX_SCRAPING_PAGES) {
     console.log(`Scraping page ${page}...`);
     const result = await fetchBicyclesPage(filters, page);
     
@@ -301,7 +314,7 @@ async function fetchBicyclesPage(
       
       const response = await fetch(url, {
         headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+          'User-Agent': USER_AGENT,
           'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
           'Accept-Language': 'es-ES,es;q=0.9,en-US;q=0.8,en;q=0.7',
           'Accept-Encoding': 'gzip, deflate, br',
@@ -317,7 +330,7 @@ async function fetchBicyclesPage(
           'Upgrade-Insecure-Requests': '1',
         },
         cache: 'default', // Use browser cache
-        signal: AbortSignal.timeout(15000), // 15 second timeout for better reliability
+        signal: AbortSignal.timeout(SCRAPING_TIMEOUT_MS),
       });
 
       if (!response.ok) {
@@ -462,8 +475,10 @@ function parseBicycleData(html: string): { bicycles: Bicycle[]; hasNextPage: boo
         const fechaRobo = extractText($card, ['.fecha-robo', '[data-fecha-robo]', 'dt:contains("Robo") + dd', 'dt:contains("Fecha de robo") + dd']) || undefined;
         const fechaLocalizacion = extractText($card, ['.fecha-localizacion', '[data-fecha-localizacion]', 'dt:contains("Localización") + dd', 'dt:contains("Fecha de localización") + dd']) || undefined;
         
-        // Generate unique ID
-        const id = `bike-${Date.now()}-${index}`;
+        // Generate unique ID using crypto.randomUUID if available, fallback to timestamp-based
+        const id = typeof crypto !== 'undefined' && crypto.randomUUID 
+          ? crypto.randomUUID()
+          : `bike-${Date.now()}-${index}-${Math.random().toString(36).substring(2, 15)}`;
         
         // Only add if we have at least brand or model
         if (marca || modelo) {
