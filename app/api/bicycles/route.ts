@@ -3,58 +3,46 @@ import type { Bicycle, SearchFilters } from '@/types/bicycle';
 import * as cheerio from 'cheerio';
 import type { AnyNode } from 'domhandler';
 
-// This function scrapes biciregistro.es for bicycle data with pagination support
+// Constants
+const MAX_API_PAGES = 10;
+const MAX_SCRAPING_PAGES = 100;
+const API_TIMEOUT_MS = 10000;
+const SCRAPING_TIMEOUT_MS = 15000;
+const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+
+// This function fetches bicycle data from biciregistro.es REST API with multiple fallback strategies
 async function fetchBicyclesFromBiciregistro(filters: SearchFilters): Promise<Bicycle[]> {
   try {
     const allBicycles: Bicycle[] = [];
-    let page = 1;
-    let hasMorePages = true;
-    let consecutiveEmptyPages = 0;
-    const maxConsecutiveEmpty = 2; // Stop after 2 consecutive empty pages
+    
+    console.log('Starting to fetch bicycles from biciregistro.es REST API...');
 
-    console.log('Starting to fetch bicycles from biciregistro.es...');
-
-    // Fetch all pages until we hit an empty page or reach the limit
-    while (hasMorePages && page <= 100) {
-      console.log(`Fetching page ${page}...`);
-      const result = await fetchBicyclesPage(filters, page);
-      
-      if (result.bicycles.length === 0) {
-        consecutiveEmptyPages++;
-        console.log(`Page ${page} returned 0 bicycles (consecutive empty: ${consecutiveEmptyPages})`);
-        
-        // If we've seen multiple consecutive empty pages, stop
-        if (consecutiveEmptyPages >= maxConsecutiveEmpty) {
-          console.log('Stopping due to consecutive empty pages');
-          hasMorePages = false;
-        }
-      } else {
-        consecutiveEmptyPages = 0; // Reset counter
-        allBicycles.push(...result.bicycles);
-        console.log(`Page ${page}: Added ${result.bicycles.length} bicycles (total: ${allBicycles.length})`);
-        
-        // Check if there's a next page indicator
-        if (result.hasNextPage === false) {
-          console.log('No more pages indicated by pagination');
-          hasMorePages = false;
-        }
+    // Strategy 1: Try the REST API endpoint (discovered from JavaScript analysis)
+    try {
+      const apiResult = await fetchFromRestAPI(filters);
+      if (apiResult.length > 0) {
+        console.log(`✓ Successfully fetched ${apiResult.length} bicycles from REST API`);
+        return apiResult;
       }
-      
-      page++;
+      console.log('REST API returned no results, trying fallback strategies...');
+    } catch (apiError) {
+      console.log('REST API failed, trying fallback strategies...', (apiError as Error).message);
     }
 
-    if (page > 100) {
-      console.warn('Reached maximum page limit (100)');
+    // Strategy 2: Try HTML scraping as fallback
+    try {
+      const scrapedResult = await fetchBicyclesViaScraping(filters);
+      if (scrapedResult.length > 0) {
+        console.log(`✓ Successfully scraped ${scrapedResult.length} bicycles from HTML`);
+        return scrapedResult;
+      }
+      console.log('HTML scraping returned no results');
+    } catch (scrapeError) {
+      console.log('HTML scraping failed:', (scrapeError as Error).message);
     }
 
-    console.log(`Successfully fetched ${allBicycles.length} bicycles from ${page - 1} pages`);
-    
-    // If we got no results at all, throw error to trigger mock data
-    if (allBicycles.length === 0) {
-      throw new Error('No bicycles found on biciregistro.es');
-    }
-    
-    return allBicycles;
+    console.log('All fetching strategies exhausted - returning empty array');
+    return [];
   } catch (error) {
     const err = error as Error;
     console.error('Error fetching bicycles from biciregistro.es:', {
@@ -63,9 +51,233 @@ async function fetchBicyclesFromBiciregistro(filters: SearchFilters): Promise<Bi
       stack: err.stack?.split('\n').slice(0, 3).join('\n'),
     });
     console.log('No data available - returning empty array');
-    // Return empty array when scraping fails
     return [];
   }
+}
+
+// Strategy 1: Fetch from REST API
+async function fetchFromRestAPI(filters: SearchFilters): Promise<Bicycle[]> {
+  const allBicycles: Bicycle[] = [];
+  const baseURL = 'https://www.biciregistro.es/biciregistro/rest';
+  
+  // Try multiple API endpoint variations
+  const endpoints = [
+    '/v1/bicicletas/pagedLocalizadas',
+    '/v1/bicicletas/getLocalizadas',
+    '/v1/bicicletas/localizadas',
+  ];
+
+  for (const endpoint of endpoints) {
+    try {
+      console.log(`Trying API endpoint: ${endpoint}`);
+      
+      // Try both POST and GET requests
+      const methods: Array<{method: 'POST' | 'GET', body?: any}> = [
+        { method: 'POST' },
+        { method: 'GET' },
+      ];
+
+      for (const methodConfig of methods) {
+        try {
+          // Try POST request with pagination parameters
+          for (let page = 0; page < MAX_API_PAGES; page++) {
+            const requestBody = methodConfig.method === 'POST' ? {
+              pageNumber: page,
+              pageSize: 100,
+              // Include search filters
+              ...(filters.marca && { marca: filters.marca }),
+              ...(filters.modelo && { modelo: filters.modelo }),
+              ...(filters.color && { color: filters.color }),
+              ...(filters.ciudad && { ciudad: filters.ciudad }),
+              ...(filters.provincia && { provincia: filters.provincia }),
+              ...(filters.numeroSerie && { numeroSerie: filters.numeroSerie }),
+              ...(filters.numeroMatricula && { numeroMatricula: filters.numeroMatricula }),
+            } : undefined;
+
+            const fetchOptions: RequestInit = {
+              method: methodConfig.method,
+              headers: {
+                'User-Agent': USER_AGENT,
+                'Accept': 'application/json',
+                'Content-Type': 'application/json',
+                'Origin': 'https://www.biciregistro.es',
+                'Referer': 'https://www.biciregistro.es/',
+              },
+              signal: AbortSignal.timeout(API_TIMEOUT_MS),
+            };
+
+            if (methodConfig.method === 'POST' && requestBody) {
+              fetchOptions.body = JSON.stringify(requestBody);
+            }
+
+            const url = methodConfig.method === 'GET' && page > 0
+              ? `${baseURL}${endpoint}?page=${page}&size=100`
+              : `${baseURL}${endpoint}`;
+
+            const response = await fetch(url, fetchOptions);
+
+            if (response.ok) {
+              const data = await response.json();
+              // Log only metadata, not full response to avoid exposing sensitive data
+              console.log(`API response from ${endpoint} (${methodConfig.method}): status=ok, hasData=${!!data}`);
+              
+              // Parse the response based on its structure
+              const bicycles = parseAPIResponse(data);
+              if (bicycles.length > 0) {
+                allBicycles.push(...bicycles);
+                console.log(`Fetched ${bicycles.length} bicycles from ${endpoint} page ${page}`);
+                
+                // Check if there are more pages
+                const hasMore = checkHasMorePages(data);
+                if (!hasMore) break;
+              } else {
+                // No more results
+                break;
+              }
+            } else if (response.status === 404 || response.status === 405) {
+              // Endpoint doesn't exist or wrong method, try next method/endpoint
+              console.log(`Endpoint ${endpoint} (${methodConfig.method}) returned ${response.status}`);
+              break;
+            } else if (response.status === 401 || response.status === 403) {
+              // Authentication required
+              console.log(`Endpoint ${endpoint} requires authentication (${response.status})`);
+              break;
+            }
+          }
+          
+          if (allBicycles.length > 0) {
+            return allBicycles;
+          }
+        } catch (methodError) {
+          console.log(`Method ${methodConfig.method} failed for ${endpoint}:`, (methodError as Error).message);
+          continue;
+        }
+      }
+    } catch (error) {
+      console.log(`Endpoint ${endpoint} failed:`, (error as Error).message);
+      continue;
+    }
+  }
+
+  return allBicycles;
+}
+
+// Parse different API response formats
+function parseAPIResponse(data: any): Bicycle[] {
+  const bicycles: Bicycle[] = [];
+  
+  try {
+    let items: any[] = [];
+    
+    // Handle different response structures
+    if (Array.isArray(data)) {
+      items = data;
+    } else if (data.content && Array.isArray(data.content)) {
+      // Spring Data Page format
+      items = data.content;
+    } else if (data.data && Array.isArray(data.data)) {
+      items = data.data;
+    } else if (data.bicicletas && Array.isArray(data.bicicletas)) {
+      items = data.bicicletas;
+    } else if (data.results && Array.isArray(data.results)) {
+      items = data.results;
+    }
+
+    for (const item of items) {
+      // Generate unique ID using crypto.randomUUID if available, fallback to timestamp-based
+      const id = typeof crypto !== 'undefined' && crypto.randomUUID 
+        ? crypto.randomUUID()
+        : `bike-${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
+        
+      const bicycle: Bicycle = {
+        id: item.id || item.idBicicleta || id,
+        marca: item.marca || item.brand || '',
+        modelo: item.modelo || item.model || '',
+        color: item.color || '',
+        numeroSerie: item.numeroSerie || item.serialNumber || item.numSerie,
+        numeroMatricula: item.numeroMatricula || item.registrationNumber || item.numMatricula,
+        ciudad: item.ciudad || item.city,
+        provincia: item.provincia || item.province,
+        descripcion: item.descripcion || item.description,
+        imagen: item.imagen || item.image || item.foto || '/images/bicicletas/placeholder.svg',
+        imagenCompleta: item.imagenCompleta || item.imagen || item.image || '/images/bicicletas/placeholder.svg',
+        estado: 'localizada',
+        fechaRobo: item.fechaRobo || item.stolenDate,
+        fechaLocalizacion: item.fechaLocalizacion || item.foundDate,
+        lugarRobo: item.lugarRobo,
+        lugarLocalizacion: item.lugarLocalizacion,
+      };
+      
+      // Fix relative image URLs
+      if (bicycle.imagen && bicycle.imagen.startsWith('/')) {
+        bicycle.imagen = `https://www.biciregistro.es${bicycle.imagen}`;
+      }
+      if (bicycle.imagenCompleta && bicycle.imagenCompleta.startsWith('/')) {
+        bicycle.imagenCompleta = `https://www.biciregistro.es${bicycle.imagenCompleta}`;
+      }
+      
+      bicycles.push(bicycle);
+    }
+  } catch (error) {
+    console.error('Error parsing API response:', error);
+  }
+  
+  return bicycles;
+}
+
+// Check if there are more pages in the response
+function checkHasMorePages(data: any): boolean {
+  // Spring Data Page format
+  if (data.last === false || data.hasNext === true) {
+    return true;
+  }
+  if (data.totalPages && data.number < data.totalPages - 1) {
+    return true;
+  }
+  // Custom pagination format
+  if (data.hasMore === true) {
+    return true;
+  }
+  return false;
+}
+
+// Strategy 2: Scrape from HTML pages
+async function fetchBicyclesViaScraping(filters: SearchFilters): Promise<Bicycle[]> {
+  const allBicycles: Bicycle[] = [];
+  let page = 1;
+  let hasMorePages = true;
+  let consecutiveEmptyPages = 0;
+  const maxConsecutiveEmpty = 2;
+
+  console.log('Starting HTML scraping fallback...');
+
+  while (hasMorePages && page <= MAX_SCRAPING_PAGES) {
+    console.log(`Scraping page ${page}...`);
+    const result = await fetchBicyclesPage(filters, page);
+    
+    if (result.bicycles.length === 0) {
+      consecutiveEmptyPages++;
+      console.log(`Page ${page} returned 0 bicycles (consecutive empty: ${consecutiveEmptyPages})`);
+      
+      if (consecutiveEmptyPages >= maxConsecutiveEmpty) {
+        console.log('Stopping due to consecutive empty pages');
+        hasMorePages = false;
+      }
+    } else {
+      consecutiveEmptyPages = 0;
+      allBicycles.push(...result.bicycles);
+      console.log(`Page ${page}: Added ${result.bicycles.length} bicycles (total: ${allBicycles.length})`);
+      
+      if (result.hasNextPage === false) {
+        console.log('No more pages indicated by pagination');
+        hasMorePages = false;
+      }
+    }
+    
+    page++;
+  }
+
+  return allBicycles;
 }
 
 // Fetch a single page of bicycles
@@ -102,7 +314,7 @@ async function fetchBicyclesPage(
       
       const response = await fetch(url, {
         headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+          'User-Agent': USER_AGENT,
           'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
           'Accept-Language': 'es-ES,es;q=0.9,en-US;q=0.8,en;q=0.7',
           'Accept-Encoding': 'gzip, deflate, br',
@@ -118,7 +330,7 @@ async function fetchBicyclesPage(
           'Upgrade-Insecure-Requests': '1',
         },
         cache: 'default', // Use browser cache
-        signal: AbortSignal.timeout(15000), // 15 second timeout for better reliability
+        signal: AbortSignal.timeout(SCRAPING_TIMEOUT_MS),
       });
 
       if (!response.ok) {
@@ -263,8 +475,10 @@ function parseBicycleData(html: string): { bicycles: Bicycle[]; hasNextPage: boo
         const fechaRobo = extractText($card, ['.fecha-robo', '[data-fecha-robo]', 'dt:contains("Robo") + dd', 'dt:contains("Fecha de robo") + dd']) || undefined;
         const fechaLocalizacion = extractText($card, ['.fecha-localizacion', '[data-fecha-localizacion]', 'dt:contains("Localización") + dd', 'dt:contains("Fecha de localización") + dd']) || undefined;
         
-        // Generate unique ID
-        const id = `bike-${Date.now()}-${index}`;
+        // Generate unique ID using crypto.randomUUID if available, fallback to timestamp-based
+        const id = typeof crypto !== 'undefined' && crypto.randomUUID 
+          ? crypto.randomUUID()
+          : `bike-${Date.now()}-${index}-${Math.random().toString(36).substring(2, 15)}`;
         
         // Only add if we have at least brand or model
         if (marca || modelo) {
