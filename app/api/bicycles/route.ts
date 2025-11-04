@@ -64,58 +64,86 @@ async function fetchFromRestAPI(filters: SearchFilters): Promise<Bicycle[]> {
     try {
       console.log(`Trying API endpoint: ${endpoint}`);
       
-      // Try POST request with pagination parameters
-      for (let page = 0; page < 10; page++) {
-        const requestBody = {
-          pageNumber: page,
-          pageSize: 100,
-          // Include search filters
-          ...(filters.marca && { marca: filters.marca }),
-          ...(filters.modelo && { modelo: filters.modelo }),
-          ...(filters.color && { color: filters.color }),
-          ...(filters.ciudad && { ciudad: filters.ciudad }),
-          ...(filters.provincia && { provincia: filters.provincia }),
-          ...(filters.numeroSerie && { numeroSerie: filters.numeroSerie }),
-          ...(filters.numeroMatricula && { numeroMatricula: filters.numeroMatricula }),
-        };
+      // Try both POST and GET requests
+      const methods: Array<{method: 'POST' | 'GET', body?: any}> = [
+        { method: 'POST' },
+        { method: 'GET' },
+      ];
 
-        const response = await fetch(`${baseURL}${endpoint}`, {
-          method: 'POST',
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'Accept': 'application/json',
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(requestBody),
-          signal: AbortSignal.timeout(10000),
-        });
+      for (const methodConfig of methods) {
+        try {
+          // Try POST request with pagination parameters
+          for (let page = 0; page < 10; page++) {
+            const requestBody = methodConfig.method === 'POST' ? {
+              pageNumber: page,
+              pageSize: 100,
+              // Include search filters
+              ...(filters.marca && { marca: filters.marca }),
+              ...(filters.modelo && { modelo: filters.modelo }),
+              ...(filters.color && { color: filters.color }),
+              ...(filters.ciudad && { ciudad: filters.ciudad }),
+              ...(filters.provincia && { provincia: filters.provincia }),
+              ...(filters.numeroSerie && { numeroSerie: filters.numeroSerie }),
+              ...(filters.numeroMatricula && { numeroMatricula: filters.numeroMatricula }),
+            } : undefined;
 
-        if (response.ok) {
-          const data = await response.json();
-          console.log(`API response from ${endpoint}:`, JSON.stringify(data).substring(0, 200));
-          
-          // Parse the response based on its structure
-          const bicycles = parseAPIResponse(data);
-          if (bicycles.length > 0) {
-            allBicycles.push(...bicycles);
-            console.log(`Fetched ${bicycles.length} bicycles from ${endpoint} page ${page}`);
-            
-            // Check if there are more pages
-            const hasMore = checkHasMorePages(data);
-            if (!hasMore) break;
-          } else {
-            // No more results
-            break;
+            const fetchOptions: RequestInit = {
+              method: methodConfig.method,
+              headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Accept': 'application/json',
+                'Content-Type': 'application/json',
+                'Origin': 'https://www.biciregistro.es',
+                'Referer': 'https://www.biciregistro.es/',
+              },
+              signal: AbortSignal.timeout(10000),
+            };
+
+            if (methodConfig.method === 'POST' && requestBody) {
+              fetchOptions.body = JSON.stringify(requestBody);
+            }
+
+            const url = methodConfig.method === 'GET' && page > 0
+              ? `${baseURL}${endpoint}?page=${page}&size=100`
+              : `${baseURL}${endpoint}`;
+
+            const response = await fetch(url, fetchOptions);
+
+            if (response.ok) {
+              const data = await response.json();
+              console.log(`API response from ${endpoint} (${methodConfig.method}):`, JSON.stringify(data).substring(0, 200));
+              
+              // Parse the response based on its structure
+              const bicycles = parseAPIResponse(data);
+              if (bicycles.length > 0) {
+                allBicycles.push(...bicycles);
+                console.log(`Fetched ${bicycles.length} bicycles from ${endpoint} page ${page}`);
+                
+                // Check if there are more pages
+                const hasMore = checkHasMorePages(data);
+                if (!hasMore) break;
+              } else {
+                // No more results
+                break;
+              }
+            } else if (response.status === 404 || response.status === 405) {
+              // Endpoint doesn't exist or wrong method, try next method/endpoint
+              console.log(`Endpoint ${endpoint} (${methodConfig.method}) returned ${response.status}`);
+              break;
+            } else if (response.status === 401 || response.status === 403) {
+              // Authentication required
+              console.log(`Endpoint ${endpoint} requires authentication (${response.status})`);
+              break;
+            }
           }
-        } else if (response.status === 404 || response.status === 405) {
-          // Endpoint doesn't exist or wrong method, try next endpoint
-          console.log(`Endpoint ${endpoint} returned ${response.status}`);
-          break;
+          
+          if (allBicycles.length > 0) {
+            return allBicycles;
+          }
+        } catch (methodError) {
+          console.log(`Method ${methodConfig.method} failed for ${endpoint}:`, (methodError as Error).message);
+          continue;
         }
-      }
-      
-      if (allBicycles.length > 0) {
-        return allBicycles;
       }
     } catch (error) {
       console.log(`Endpoint ${endpoint} failed:`, (error as Error).message);
