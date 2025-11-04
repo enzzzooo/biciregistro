@@ -1,7 +1,9 @@
-# BiciRegistro Scraping Documentation
+# BiciRegistro Data Fetching Documentation
 
 ## Overview
-This application scrapes bicycle data from [biciregistro.es/bicicletas/localizadas](https://biciregistro.es/bicicletas/localizadas) and displays all found bicycles.
+This application fetches bicycle data from [biciregistro.es](https://www.biciregistro.es/#/bicicletas/foundsearch) and displays all found bicycles.
+
+**Important:** BiciRegistro.es is a Single Page Application (SPA) that uses JavaScript to load data. The found bicycles page is at `https://www.biciregistro.es/#/bicicletas/foundsearch`.
 
 ## How Pagination Works
 
@@ -16,17 +18,27 @@ The scraper automatically fetches **ALL pages** from biciregistro.es:
 
 ## Current Status
 
+### Known Issue
+- ⚠️ **BiciRegistro.es is a SPA (Single Page Application)** - The data is loaded via JavaScript/API calls
+- ⚠️ **Correct URL:** `https://www.biciregistro.es/#/bicicletas/foundsearch` (hash-based routing)
+- ❌ **Current implementation** attempts to scrape HTML but needs to be updated to call the backend API directly
+- ✅ **In sandbox/development**: Returns empty array when fetching fails (no mock data)
+- ✅ **Shows "No data found"** message when no bicycles are available
+
 ### In Development/Sandbox Environment
 - ❌ **biciregistro.es is NOT accessible** (network restrictions)
-- ✅ Falls back to **12 mock bicycles** for development/demo
+- ✅ Returns **empty array** (no mock/placeholder data)
+- ✅ UI displays "No se encontraron bicicletas" message
 - ✅ Detailed logging shows scraping attempts and retries
 
-### When Deployed to Production
-- ✅ Will fetch **ALL bicycles across all pages** from biciregistro.es
-- ✅ Automatic pagination - no manual configuration needed
-- ✅ Robust error handling with 3 retry attempts per page
-- ✅ 10-second timeout per request
+### When Deployed to Production (Vercel)
+- ⚠️ **Action Required**: Find the actual backend API endpoint used by the SPA
+- The frontend likely calls an API like `/api/bicicletas/found` or similar
+- Once the correct endpoint is identified, update the code to call it directly
+- ✅ Robust error handling with 3 retry attempts per request
+- ✅ 15-second timeout per request
 - ✅ Exponential backoff on failures
+- ✅ 5-minute caching to reduce server load
 
 ## Features
 
@@ -90,9 +102,31 @@ npm run dev
 # Check server logs for scraping details
 ```
 
+## Finding the Correct API Endpoint
+
+Since biciregistro.es is a SPA, you need to find the backend API it calls:
+
+1. **Open the website** in a browser: `https://www.biciregistro.es/#/bicicletas/foundsearch`
+2. **Open Developer Tools** (F12)
+3. **Go to Network tab**
+4. **Filter by XHR/Fetch**
+5. **Perform a search** or load the found bicycles page
+6. **Look for API calls** - likely endpoints like:
+   - `/api/bicicletas/found`
+   - `/rest/bicicletas/found`
+   - `/backend/bicicletas/search`
+   - Or similar patterns
+7. **Check the response** - it should return JSON with bicycle data
+8. **Update the code** in `/app/api/bicycles/route.ts` with the correct endpoint
+
+### Current Implementation
+The code currently tries to scrape from `https://biciregistro.es/bicicletas/localizadas` but this is not the correct approach for a SPA. It needs to be updated to call the actual backend API once identified.
+
 ## Fallback Behavior
 
-If scraping fails:
+If data fetching fails:
 1. Logs the error with details
-2. Falls back to mock data (12 bikes)
-3. Continues to work for development/testing
+2. Returns **empty array** (no mock/placeholder data)
+3. UI shows "No se encontraron bicicletas con estos criterios" message
+
+**Note:** Mock data fallback was removed as per requirements. The app now only shows real data from biciregistro.es or displays "no data found".

@@ -56,10 +56,15 @@ async function fetchBicyclesFromBiciregistro(filters: SearchFilters): Promise<Bi
     
     return allBicycles;
   } catch (error) {
-    console.error('Error fetching bicycles from biciregistro.es:', error);
-    console.log('Falling back to mock data');
-    // Return mock data for development/demo purposes
-    return getMockBicycles(filters);
+    const err = error as Error;
+    console.error('Error fetching bicycles from biciregistro.es:', {
+      message: err.message,
+      name: err.name,
+      stack: err.stack?.split('\n').slice(0, 3).join('\n'),
+    });
+    console.log('No data available - returning empty array');
+    // Return empty array when scraping fails
+    return [];
   }
 }
 
@@ -97,15 +102,23 @@ async function fetchBicyclesPage(
       
       const response = await fetch(url, {
         headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-          'Accept-Language': 'es-ES,es;q=0.9,en;q=0.8',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+          'Accept-Language': 'es-ES,es;q=0.9,en-US;q=0.8,en;q=0.7',
           'Accept-Encoding': 'gzip, deflate, br',
-          'Connection': 'keep-alive',
+          'Cache-Control': 'no-cache',
+          'Pragma': 'no-cache',
+          'Sec-Ch-Ua': '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+          'Sec-Ch-Ua-Mobile': '?0',
+          'Sec-Ch-Ua-Platform': '"Windows"',
+          'Sec-Fetch-Dest': 'document',
+          'Sec-Fetch-Mode': 'navigate',
+          'Sec-Fetch-Site': 'none',
+          'Sec-Fetch-User': '?1',
           'Upgrade-Insecure-Requests': '1',
         },
-        cache: 'no-store',
-        signal: AbortSignal.timeout(10000), // 10 second timeout
+        next: { revalidate: 300 }, // Cache for 5 minutes in production
+        signal: AbortSignal.timeout(15000), // 15 second timeout for better reliability
       });
 
       if (!response.ok) {
@@ -122,7 +135,14 @@ async function fetchBicyclesPage(
       return result;
     } catch (error) {
       lastError = error as Error;
-      console.error(`Attempt ${attempt}/${maxRetries} failed for page ${page}:`, error);
+      const errorDetails = {
+        attempt,
+        page,
+        message: lastError.message,
+        name: lastError.name,
+        cause: (lastError as any).cause?.message || 'unknown',
+      };
+      console.error(`Attempt ${attempt}/${maxRetries} failed for page ${page}:`, errorDetails);
       
       if (attempt < maxRetries) {
         // Wait before retrying (exponential backoff)
