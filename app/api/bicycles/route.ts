@@ -117,7 +117,7 @@ async function fetchBicyclesPage(
           'Sec-Fetch-User': '?1',
           'Upgrade-Insecure-Requests': '1',
         },
-        next: { revalidate: 300 }, // Cache for 5 minutes in production
+        cache: 'default', // Use browser cache
         signal: AbortSignal.timeout(15000), // 15 second timeout for better reliability
       });
 
