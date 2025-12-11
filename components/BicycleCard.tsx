@@ -12,6 +12,9 @@ interface BicycleCardProps {
 export default function BicycleCard({ bicycle, onImageClick }: BicycleCardProps) {
   const [imageError, setImageError] = React.useState(false);
   const imageUrl = imageError || !bicycle.imagen ? '/images/bicicletas/placeholder.svg' : bicycle.imagen;
+  
+  // Use regular img for proxy URLs, Next.js Image for others
+  const isProxiedImage = imageUrl.startsWith('/api/proxy-image');
 
   return (
     <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg overflow-hidden hover:shadow-xl transition-shadow">
@@ -20,14 +23,23 @@ export default function BicycleCard({ bicycle, onImageClick }: BicycleCardProps)
         className="relative h-64 bg-gray-200 dark:bg-gray-700 cursor-pointer overflow-hidden group"
         onClick={() => onImageClick(bicycle.imagenCompleta || bicycle.imagen || imageUrl)}
       >
-        <Image
-          src={imageUrl}
-          alt={`${bicycle.marca} ${bicycle.modelo}`}
-          fill
-          className="object-cover group-hover:scale-110 transition-transform duration-300"
-          sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
-          onError={() => setImageError(true)}
-        />
+        {isProxiedImage ? (
+          <img
+            src={imageUrl}
+            alt={`${bicycle.marca} ${bicycle.modelo}`}
+            className="absolute inset-0 w-full h-full object-cover group-hover:scale-110 transition-transform duration-300"
+            onError={() => setImageError(true)}
+          />
+        ) : (
+          <Image
+            src={imageUrl}
+            alt={`${bicycle.marca} ${bicycle.modelo}`}
+            fill
+            className="object-cover group-hover:scale-110 transition-transform duration-300"
+            sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
+            onError={() => setImageError(true)}
+          />
+        )}
         <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 transition-opacity flex items-center justify-center">
           <span className="text-white opacity-0 group-hover:opacity-100 text-lg font-semibold">
             🔍 Ver en alta resolución
