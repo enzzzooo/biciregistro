@@ -2,7 +2,7 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   images: {
-    // Allow images from our proxy API route and external sources
+    // Allow images from external sources (for placeholder/fallback images)
     remotePatterns: [
       {
         protocol: 'https',
@@ -11,13 +11,6 @@ const nextConfig: NextConfig = {
       {
         protocol: 'https',
         hostname: 'www.biciregistro.es',
-      },
-    ],
-    // Allow local proxy API route with query parameters
-    localPatterns: [
-      {
-        pathname: '/api/proxy-image',
-        search: '**',
       },
     ],
   },
