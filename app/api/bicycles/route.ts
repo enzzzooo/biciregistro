@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import type { Bicycle, SearchFilters } from '@/types/bicycle';
 import * as cheerio from 'cheerio';
 import type { AnyNode } from 'domhandler';
+import { chromium } from 'playwright';
 
 // Constants
 const MAX_API_PAGES = 10;
@@ -29,7 +30,20 @@ async function fetchBicyclesFromBiciregistro(filters: SearchFilters): Promise<Bi
       console.log('REST API failed, trying fallback strategies...', (apiError as Error).message);
     }
 
-    // Strategy 2: Try HTML scraping as fallback
+    // Strategy 2: Try Playwright to render SPA and scrape
+    try {
+      console.log('Attempting to scrape SPA with Playwright...');
+      const playwrightResult = await fetchBicyclesWithPlaywright(filters);
+      if (playwrightResult.length > 0) {
+        console.log(`✓ Successfully scraped ${playwrightResult.length} bicycles using Playwright`);
+        return playwrightResult;
+      }
+      console.log('Playwright scraping returned no results');
+    } catch (playwrightError) {
+      console.log('Playwright scraping failed:', (playwrightError as Error).message);
+    }
+
+    // Strategy 3: Try HTML scraping as fallback
     try {
       const scrapedResult = await fetchBicyclesViaScraping(filters);
       if (scrapedResult.length > 0) {
@@ -41,8 +55,8 @@ async function fetchBicyclesFromBiciregistro(filters: SearchFilters): Promise<Bi
       console.log('HTML scraping failed:', (scrapeError as Error).message);
     }
 
-    console.log('All fetching strategies exhausted - using mock data as fallback');
-    return getMockBicycles(filters);
+    console.log('All fetching strategies exhausted - returning empty array');
+    return [];
   } catch (error) {
     const err = error as Error;
     console.error('Error fetching bicycles from biciregistro.es:', {
@@ -50,8 +64,8 @@ async function fetchBicyclesFromBiciregistro(filters: SearchFilters): Promise<Bi
       name: err.name,
       stack: err.stack?.split('\n').slice(0, 3).join('\n'),
     });
-    console.log('No data available - using mock data as fallback');
-    return getMockBicycles(filters);
+    console.log('No data available - returning empty array');
+    return [];
   }
 }
 
@@ -160,6 +174,239 @@ async function fetchFromRestAPI(filters: SearchFilters): Promise<Bicycle[]> {
   }
 
   return allBicycles;
+}
+
+// Strategy 2: Use Playwright to render the SPA and scrape data
+async function fetchBicyclesWithPlaywright(filters: SearchFilters): Promise<Bicycle[]> {
+  let browser = null;
+  try {
+    console.log('Launching headless browser...');
+    browser = await chromium.launch({
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox']
+    });
+    
+    const context = await browser.newContext({
+      userAgent: USER_AGENT,
+      locale: 'es-ES',
+      ignoreHTTPSErrors: true,
+    });
+    
+    const page = await context.newPage();
+    
+    // Navigate to the SPA URL
+    const url = 'https://www.biciregistro.es/#/bicicletas/foundsearch';
+    console.log(`Navigating to ${url}...`);
+    
+    await page.goto(url, { 
+      waitUntil: 'networkidle',
+      timeout: 30000 
+    });
+    
+    // Wait for bicycle data to load - look for bicycle cards or table rows
+    console.log('Waiting for bicycle data to load...');
+    try {
+      await page.waitForSelector('.bicicleta-card, .bicycle-card, table tbody tr, [data-bicycle], [data-bicicleta]', {
+        timeout: 15000
+      });
+    } catch (e) {
+      console.log('No bicycle cards found, trying to extract from page content anyway...');
+    }
+    
+    // Get the rendered HTML content
+    const content = await page.content();
+    
+    await browser.close();
+    browser = null;
+    
+    // Parse the rendered HTML using cheerio
+    console.log('Parsing rendered HTML content...');
+    const $ = cheerio.load(content);
+    const bicycles: Bicycle[] = [];
+    
+    // Try multiple selectors to find bicycle data
+    const cardSelectors = [
+      '.bicicleta-card',
+      '.bicycle-card',
+      '.bike-item',
+      '.bicicleta-item',
+      'article.bicicleta',
+      '.card.bicicleta',
+      '[data-bicicleta]',
+      '[data-bicycle]',
+      '.resultado-bicicleta',
+      '.resultado',
+      'table tbody tr',
+    ];
+    
+    let $cards = $();
+    let usedSelector = '';
+    
+    for (const selector of cardSelectors) {
+      $cards = $(selector);
+      if ($cards.length > 0) {
+        usedSelector = selector;
+        console.log(`Found ${$cards.length} bicycles using selector: ${selector}`);
+        break;
+      }
+    }
+    
+    if ($cards.length === 0) {
+      console.log('No bicycle data found in rendered page');
+      return [];
+    }
+    
+    // Extract bicycle data from each card
+    $cards.each((index, element) => {
+      const $card = $(element);
+      
+      try {
+        let marca = '', modelo = '', color = '', tipo = '', imagen = undefined;
+        let fechaLocalizacion = undefined, deposito = undefined;
+        
+        // If it's a table row, extract data from all cells  
+        if (usedSelector.includes('tbody tr')) {
+          const cells = $card.find('td');
+          if (cells.length > 0) {
+            // First cell typically has image
+            imagen = extractImage($(cells[0]), ['img']) || undefined;
+            
+            // Get all text from the row
+            const rowText = $card.text();
+            
+            // Extract fields using regex patterns
+            const marcaMatch = rowText.match(/Marca\s*[:\*]\s*([^\n]+)/);
+            if (marcaMatch) {
+              marca = marcaMatch[1].replace('* No existe en lista', '').replace('Modelo', '').trim();
+            }
+            
+            const modeloMatch = rowText.match(/Modelo\s*[:\*]\s*([^\n]+)/);
+            if (modeloMatch) {
+              modelo = modeloMatch[1].replace('SIN', '').replace('Tipo', '').trim();
+            }
+            
+            const tipoMatch = rowText.match(/Tipo\s*[:\*]\s*([^\n]+)/);
+            if (tipoMatch) {
+              tipo = tipoMatch[1].replace('Color', '').trim();
+            }
+            
+            const colorMatch = rowText.match(/Color\s*[:\*]\s*([^\n]+)/);
+            if (colorMatch) {
+              color = colorMatch[1].replace('Fecha', '').trim();
+            }
+            
+            const fechaMatch = rowText.match(/Fecha localización\s*[:\*]?\s*([^\n]+)/);
+            if (fechaMatch) {
+              const fecha = fechaMatch[1].replace('Deposito', '').trim();
+              if (fecha && fecha.length > 0 && fecha.length < 50) {
+                fechaLocalizacion = fecha;
+              }
+            }
+            
+            const depositoMatch = rowText.match(/Deposito\s*[:\*]?\s*(.+?)$/s);
+            if (depositoMatch) {
+              deposito = depositoMatch[1].trim();
+            }
+          }
+        } else {
+          // For non-table structures, use the original extraction logic
+          marca = extractText($card, ['.marca', '[data-marca]', 'strong:contains("Marca")', '.brand', 'dt:contains("Marca") + dd']) || '';
+          modelo = extractText($card, ['.modelo', '[data-modelo]', '.model', 'dt:contains("Modelo") + dd']) || '';
+          color = extractText($card, ['.color', '[data-color]', 'dt:contains("Color") + dd']) || '';
+          imagen = extractImage($card, ['img.imagen', 'img.foto', 'img.bicicleta', 'img', '[data-imagen]']) || undefined;
+        }
+        
+        const numeroSerie = extractText($card, ['.numero-serie', '[data-numero-serie]', '.serial-number', 'dt:contains("Serie") + dd']) || undefined;
+        const numeroMatricula = extractText($card, ['.numero-matricula', '[data-numero-matricula]', '.registration', 'dt:contains("Matrícula") + dd']) || undefined;
+        const ciudadFinal = deposito || extractText($card, ['.ciudad', '[data-ciudad]', '.city', 'dt:contains("Ciudad") + dd']) || undefined;
+        const provincia = extractText($card, ['.provincia', '[data-provincia]', '.province', 'dt:contains("Provincia") + dd']) || undefined;
+        const descripcionFinal = tipo || extractText($card, ['.descripcion', '[data-descripcion]', '.description', 'p', 'dt:contains("Descripción") + dd']) || undefined;
+        
+        // Extract dates (fechaLocalizacion may already be set from table parsing)
+        const fechaRobo = extractText($card, ['.fecha-robo', '[data-fecha-robo]', 'dt:contains("Robo") + dd', 'dt:contains("Fecha de robo") + dd']) || undefined;
+        if (!fechaLocalizacion) {
+          fechaLocalizacion = extractText($card, ['.fecha-localizacion', '[data-fecha-localizacion]', 'dt:contains("Localización") + dd', 'dt:contains("Fecha de localización") + dd']) || undefined;
+        }
+        
+        // Generate unique ID
+        const id = typeof crypto !== 'undefined' && crypto.randomUUID 
+          ? crypto.randomUUID()
+          : `bike-${Date.now()}-${index}-${Math.random().toString(36).substring(2, 15)}`;
+        
+        // Only add if we have at least brand or model or description
+        if (marca || modelo || descripcionFinal) {
+          const bicycle: Bicycle = {
+            id,
+            marca: marca || 'Desconocida',
+            modelo: modelo || 'Sin modelo',
+            color: color || '',
+            numeroSerie,
+            numeroMatricula,
+            ciudad: ciudadFinal,
+            provincia,
+            descripcion: descripcionFinal,
+            imagen: imagen ? (imagen.startsWith('http') ? imagen : `https://www.biciregistro.es${imagen}`) : '/images/bicicletas/placeholder.svg',
+            imagenCompleta: imagen ? (imagen.startsWith('http') ? imagen : `https://www.biciregistro.es${imagen}`) : '/images/bicicletas/placeholder.svg',
+            estado: 'localizada',
+            fechaRobo,
+            fechaLocalizacion,
+          };
+          
+          bicycles.push(bicycle);
+        }
+      } catch (err) {
+        console.error(`Error parsing bicycle at index ${index}:`, err);
+      }
+    });
+    
+    console.log(`Successfully extracted ${bicycles.length} bicycles from rendered SPA`);
+    
+    // Apply filters if any
+    let filtered = bicycles;
+    
+    if (filters.marca) {
+      filtered = filtered.filter(b => b.marca.toLowerCase().includes(filters.marca!.toLowerCase()));
+    }
+    if (filters.modelo) {
+      filtered = filtered.filter(b => b.modelo.toLowerCase().includes(filters.modelo!.toLowerCase()));
+    }
+    if (filters.color) {
+      filtered = filtered.filter(b => b.color.toLowerCase().includes(filters.color!.toLowerCase()));
+    }
+    if (filters.ciudad) {
+      filtered = filtered.filter(b => b.ciudad?.toLowerCase().includes(filters.ciudad!.toLowerCase()));
+    }
+    if (filters.provincia) {
+      filtered = filtered.filter(b => b.provincia?.toLowerCase().includes(filters.provincia!.toLowerCase()));
+    }
+    if (filters.numeroSerie) {
+      filtered = filtered.filter(b => b.numeroSerie?.toLowerCase().includes(filters.numeroSerie!.toLowerCase()));
+    }
+    if (filters.numeroMatricula) {
+      filtered = filtered.filter(b => b.numeroMatricula?.toLowerCase().includes(filters.numeroMatricula!.toLowerCase()));
+    }
+    if (filters.searchTerm) {
+      const term = filters.searchTerm.toLowerCase();
+      filtered = filtered.filter(b => 
+        b.marca.toLowerCase().includes(term) ||
+        b.modelo.toLowerCase().includes(term) ||
+        b.color.toLowerCase().includes(term) ||
+        b.ciudad?.toLowerCase().includes(term) ||
+        b.provincia?.toLowerCase().includes(term) ||
+        b.descripcion?.toLowerCase().includes(term)
+      );
+    }
+    
+    console.log(`After applying filters: ${filtered.length} bicycles`);
+    return filtered;
+    
+  } catch (error) {
+    console.error('Playwright scraping error:', error);
+    if (browser) {
+      await browser.close();
+    }
+    throw error;
+  }
 }
 
 // Parse different API response formats

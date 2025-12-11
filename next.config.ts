@@ -7,6 +7,10 @@ const nextConfig: NextConfig = {
         protocol: 'https',
         hostname: 'biciregistro.es',
       },
+      {
+        protocol: 'https',
+        hostname: 'www.biciregistro.es',
+      },
     ],
   },
 };
