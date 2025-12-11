@@ -41,8 +41,8 @@ async function fetchBicyclesFromBiciregistro(filters: SearchFilters): Promise<Bi
       console.log('HTML scraping failed:', (scrapeError as Error).message);
     }
 
-    console.log('All fetching strategies exhausted - returning empty array');
-    return [];
+    console.log('All fetching strategies exhausted - using mock data as fallback');
+    return getMockBicycles(filters);
   } catch (error) {
     const err = error as Error;
     console.error('Error fetching bicycles from biciregistro.es:', {
@@ -50,8 +50,8 @@ async function fetchBicyclesFromBiciregistro(filters: SearchFilters): Promise<Bi
       name: err.name,
       stack: err.stack?.split('\n').slice(0, 3).join('\n'),
     });
-    console.log('No data available - returning empty array');
-    return [];
+    console.log('No data available - using mock data as fallback');
+    return getMockBicycles(filters);
   }
 }
 
