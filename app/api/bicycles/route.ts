@@ -213,6 +213,9 @@ async function fetchBicyclesWithPlaywright(filters: SearchFilters): Promise<Bicy
       console.log('No bicycle cards found, trying to extract from page content anyway...');
     }
     
+    // Wait an additional 2 seconds for any lazy-loaded content
+    await page.waitForTimeout(2000);
+    
     // Get the rendered HTML content
     const content = await page.content();
     
@@ -277,35 +280,50 @@ async function fetchBicyclesWithPlaywright(filters: SearchFilters): Promise<Bicy
             // Extract fields using regex patterns
             const marcaMatch = rowText.match(/Marca\s*[:\*]\s*([^\n]+)/);
             if (marcaMatch) {
-              marca = marcaMatch[1].replace('* No existe en lista', '').replace('Modelo', '').trim();
+              let rawMarca = marcaMatch[1];
+              // Don't use marca if it says "No existe en lista"
+              if (!rawMarca.includes('No existe en lista')) {
+                marca = rawMarca.replace(/Modelo/g, '').trim();
+              }
             }
             
             const modeloMatch = rowText.match(/Modelo\s*[:\*]\s*([^\n]+)/);
             if (modeloMatch) {
-              modelo = modeloMatch[1].replace('SIN', '').replace('Tipo', '').trim();
+              let rawModelo = modeloMatch[1];
+              // Don't use modelo if it says "SIN"
+              if (!rawModelo.toUpperCase().includes('SIN')) {
+                modelo = rawModelo.replace(/Tipo/g, '').trim();
+              }
             }
             
             const tipoMatch = rowText.match(/Tipo\s*[:\*]\s*([^\n]+)/);
             if (tipoMatch) {
-              tipo = tipoMatch[1].replace('Color', '').trim();
+              tipo = tipoMatch[1].replace(/Color/g, '').trim();
             }
             
             const colorMatch = rowText.match(/Color\s*[:\*]\s*([^\n]+)/);
             if (colorMatch) {
-              color = colorMatch[1].replace('Fecha', '').trim();
+              color = colorMatch[1].replace(/Fecha/g, '').trim();
             }
             
             const fechaMatch = rowText.match(/Fecha localización\s*[:\*]?\s*([^\n]+)/);
             if (fechaMatch) {
-              const fecha = fechaMatch[1].replace('Deposito', '').trim();
+              const fecha = fechaMatch[1].replace(/Deposito/g, '').trim();
               if (fecha && fecha.length > 0 && fecha.length < 50) {
                 fechaLocalizacion = fecha;
               }
             }
             
-            const depositoMatch = rowText.match(/Deposito\s*[:\*]?\s*(.+?)$/s);
+            const depositoMatch = rowText.match(/Deposito\s*[:\*]?\s*([^\s]+(?:\s+[^\s]+)*?)(?:\s{2,}|\n|$)/);
             if (depositoMatch) {
-              deposito = depositoMatch[1].trim();
+              let cleanDeposito = depositoMatch[1]
+                .replace(/Ver ficha/gi, '')
+                .replace(/\n+/g, ' ')
+                .replace(/\s+/g, ' ')
+                .trim();
+              if (cleanDeposito && cleanDeposito.length > 0 && cleanDeposito.length < 100) {
+                deposito = cleanDeposito;
+              }
             }
           }
         } else {
@@ -333,12 +351,12 @@ async function fetchBicyclesWithPlaywright(filters: SearchFilters): Promise<Bicy
           ? crypto.randomUUID()
           : `bike-${Date.now()}-${index}-${Math.random().toString(36).substring(2, 15)}`;
         
-        // Only add if we have at least brand or model or description
-        if (marca || modelo || descripcionFinal) {
+        // Add bike if we have image or any useful data (be more permissive)
+        if (imagen || marca || modelo || descripcionFinal || ciudadFinal) {
           const bicycle: Bicycle = {
             id,
             marca: marca || 'Desconocida',
-            modelo: modelo || 'Sin modelo',
+            modelo: modelo || 'Desconocido',
             color: color || '',
             numeroSerie,
             numeroMatricula,
